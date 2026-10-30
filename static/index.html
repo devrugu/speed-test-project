@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Speed Test</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Speed Test</h1>
+    <button id="start-button" type="button">Start Test</button>
+    <p id="status">Ready</p>
+
+    <section class="results">
+      <div class="result">
+        <h2>Ping</h2>
+        <p><span id="ping-value">--</span> ms</p>
+      </div>
+      <div class="result">
+        <h2>Download</h2>
+        <p><span id="download-value">--</span> Mbps</p>
+      </div>
+      <div class="result">
+        <h2>Upload</h2>
+        <p><span id="upload-value">--</span> Mbps</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

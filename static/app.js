@@ -5,7 +5,7 @@
 
 // ----- Settings -----
 const PING_COUNT = 10;               // number of pings (we report the lowest)
-const CONNECTIONS = 4;               // parallel connections, one alone can't fill a fast line
+const CONNECTIONS = 6;               // parallel connections (6 = the most a browser opens to one site)
 const FIRST_OBJECT_SIZE = 100_000;   // 100 KB, size of the first object on each connection
 const BIGGEST_OBJECT_SIZE = 8_000_000; // 8 MB, objects never get bigger than this
 const FAST_OBJECT_TIME = 250;        // ms, if an object finishes faster, the next one is 2x bigger

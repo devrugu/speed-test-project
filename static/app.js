@@ -1,253 +1,291 @@
-// Number of ping requests used to find the round-trip time.
-const PING_SAMPLE_COUNT = 10;
+// =====================================================================
+// Speed test client
+// Order of the test: 1) ping  2) download speed  3) upload speed
+// =====================================================================
 
-// Object sizes in bytes, tried from smallest to largest.
-const OBJECT_SIZES = [
-  25_000, 100_000, 250_000, 500_000, 1_000_000, 2_500_000, 5_000_000, 10_000_000, 25_000_000,
-];
+// ----- Settings -----
+const PING_COUNT = 10;               // number of pings (we report the lowest)
+const CONNECTIONS = 4;               // parallel connections, one alone can't fill a fast line
+const FIRST_OBJECT_SIZE = 100_000;   // 100 KB, size of the first object on each connection
+const BIGGEST_OBJECT_SIZE = 8_000_000; // 8 MB, objects never get bigger than this
+const FAST_OBJECT_TIME = 250;        // ms, if an object finishes faster, the next one is 2x bigger
+const CHECK_EVERY = 250;             // ms, how often we calculate the speed
+const READINGS_PER_SECOND = 4;       // 4 checks x 250 ms = speed is measured over the last 1 second
+const WARM_UP_TIME = 1000;           // ms, ignore the first second (TCP is still speeding up)
+const READINGS_TO_COMPARE = 4;       // stop when the last 4 readings ...
+const ALLOWED_DIFFERENCE = 0.10;     // ... are within 10% of each other
+const MAX_TEST_TIME = 8000;          // ms, stop anyway after 8 seconds
 
-// Number of connections that transfer data at the same time.
-const PARALLEL_CONNECTIONS = 4;
-
-// A connection moves to a larger object if one finishes faster than this.
-const TARGET_OBJECT_TIME_MS = 300;
-
-// How often the speed is checked.
-const SAMPLE_INTERVAL_MS = 250;
-
-// Speeds from the start of a test are ignored while TCP speeds up.
-const RAMP_UP_TIME_MS = 1000;
-
-// Number of samples used to calculate each speed (4 samples is 1 second).
-const SPEED_WINDOW_SAMPLES = 4;
-
-// The test stops once this many speeds in a row are close to each other.
-const STABLE_SPEED_COUNT = 3;
-
-// "Close" means the speeds are within 10% of the fastest one.
-const STABILITY_TOLERANCE = 0.1;
-
-// Hard limits for one download or upload test.
-const MAX_TEST_TIME_MS = 8000;
-const MAX_TEST_BYTES = 300_000_000;
-
-// The most random bytes the browser can generate in one call.
-const MAX_RANDOM_CHUNK_SIZE = 65_536;
-
-// Find the page elements this script needs to use.
+// ----- Page elements -----
 const startButton = document.getElementById("start-button");
 const statusText = document.getElementById("status");
 const pingValue = document.getElementById("ping-value");
 const downloadValue = document.getElementById("download-value");
 const uploadValue = document.getElementById("upload-value");
+const downloadData = document.getElementById("download-data");
+const uploadData = document.getElementById("upload-data");
+const summaryText = document.getElementById("summary");
 
-// Random data sent to the server, large enough for the biggest object.
-// A Blob lets the browser send it without slowing down this script.
-const uploadData = new Blob([createRandomData(OBJECT_SIZES[OBJECT_SIZES.length - 1])]);
+// The state of the download or upload test that is running now.
+let test = { running: false, bytes: 0, openRequests: [] };
 
-// Returns an array of random bytes of the given size.
-function createRandomData(size) {
+// Random data we upload. It is created when the test starts.
+let uploadBlob = null;
+
+// ----- Small helper functions -----
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// bytes in a number of milliseconds -> megabits per second
+function toMbps(bytes, ms) {
+  return (bytes * 8) / (ms * 1000);
+}
+
+// bytes -> text like "12.34 MB"
+function toMB(bytes) {
+  return (bytes / 1_000_000).toFixed(2) + " MB";
+}
+
+function average(numbers) {
+  let sum = 0;
+  for (const n of numbers) sum += n;
+  return sum / numbers.length;
+}
+
+// True when the biggest and smallest reading are within 10% of each other.
+function isStable(readings) {
+  const biggest = Math.max(...readings);
+  const smallest = Math.min(...readings);
+  return biggest > 0 && biggest - smallest <= biggest * ALLOWED_DIFFERENCE;
+}
+
+// Makes random bytes for uploading. The browser can only make 65536 at a time.
+function makeRandomBlob(size) {
   const data = new Uint8Array(size);
-
-  for (let start = 0; start < size; start += MAX_RANDOM_CHUNK_SIZE) {
-    const end = Math.min(start + MAX_RANDOM_CHUNK_SIZE, size);
-    crypto.getRandomValues(data.subarray(start, end));
+  for (let i = 0; i < size; i += 65536) {
+    crypto.getRandomValues(data.subarray(i, Math.min(i + 65536, size)));
   }
-
-  return data;
+  return new Blob([data]);
 }
 
-// Returns a promise that finishes after the given time.
-function wait(durationMs) {
-  return new Promise((resolve) => setTimeout(resolve, durationMs));
+// Removes a finished request from the list of open requests.
+function forgetRequest(request) {
+  test.openRequests = test.openRequests.filter((r) => r !== request);
 }
 
-// Converts bytes and milliseconds to megabits per second.
-function calculateSpeedMbps(bytes, durationMs) {
-  return (bytes * 8) / (durationMs * 1000);
+// Stops the test and cancels every request that is still running,
+// so we don't waste time and data finishing them.
+function stopTest() {
+  test.running = false;
+  for (const request of test.openRequests) {
+    request.abort();
+  }
 }
 
-// Sends one request to the server and returns how long it took in milliseconds.
-async function measureSinglePing() {
-  const startTime = performance.now();
+// ----- 1) Ping -----
+
+// Sends one empty request and returns the round-trip time in ms.
+async function pingOnce() {
+  const start = performance.now();
   const response = await fetch("/ping", { cache: "no-store" });
-  const endTime = performance.now();
-
-  if (!response.ok) {
-    throw new Error("Ping request failed");
-  }
-
-  return endTime - startTime;
+  const time = performance.now() - start;
+  if (!response.ok) throw new Error("ping failed");
+  return time;
 }
 
-// Returns the lowest round-trip time from several ping requests.
 async function measurePing() {
-  // The first request also opens the connection, so its time is not used.
-  await measureSinglePing();
+  // The first ping also opens the connection, so it is slower. We don't count it.
+  await pingOnce();
 
-  let lowestPing = Infinity;
-  for (let sample = 0; sample < PING_SAMPLE_COUNT; sample++) {
-    const pingTime = await measureSinglePing();
-    if (pingTime < lowestPing) {
-      lowestPing = pingTime;
-    }
+  let lowest = Infinity;
+  for (let i = 0; i < PING_COUNT; i++) {
+    const time = await pingOnce();
+    lowest = Math.min(lowest, time);
   }
-
-  return lowestPing;
+  return lowest;
 }
 
-// Downloads one object, adding the bytes to the progress as they arrive.
-async function downloadObject(size, progress) {
-  const response = await fetch(`/download?size=${size}`, { cache: "no-store" });
+// ----- 2) Download one object -----
 
-  if (!response.ok) {
-    throw new Error("Download request failed");
-  }
+async function downloadOne(size) {
+  const controller = new AbortController(); // lets stopTest() cancel this download
+  test.openRequests.push(controller);
 
-  // Read the data piece by piece as it arrives, counting the bytes.
-  const reader = response.body.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  try {
+    const response = await fetch("/download?size=" + size, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("download failed");
+
+    // Count the bytes piece by piece while they arrive.
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      test.bytes += value.length;
     }
-    progress.transferredBytes += value.length;
+  } finally {
+    forgetRequest(controller);
   }
 }
 
-// Uploads one object, adding the bytes to the progress as they are sent.
-// This uses XMLHttpRequest because fetch cannot report upload progress.
-function uploadObject(size, progress) {
+// ----- 3) Upload one object -----
+// We use XMLHttpRequest here because fetch() can't tell us upload progress.
+
+function uploadOne(size) {
   return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    let countedBytes = 0;
+    const xhr = new XMLHttpRequest();
+    let countedBytes = 0; // bytes of this object already added to test.bytes
+    test.openRequests.push(xhr);
 
-    request.open("POST", "/upload");
-
-    request.upload.onprogress = (event) => {
-      progress.transferredBytes += event.loaded - countedBytes;
+    xhr.upload.onprogress = (event) => {
+      test.bytes += event.loaded - countedBytes;
       countedBytes = event.loaded;
     };
 
-    request.onload = () => {
-      if (request.status !== 200) {
-        reject(new Error("Upload request failed"));
+    xhr.onload = () => {
+      forgetRequest(xhr);
+      if (xhr.status !== 200) {
+        reject(new Error("upload failed"));
         return;
       }
-
-      // Replace the browser's count with the exact number the server received.
-      progress.transferredBytes += Number(request.responseText) - countedBytes;
+      test.bytes += size - countedBytes; // make sure the whole object is counted
       resolve();
     };
 
-    request.onerror = () => reject(new Error("Upload request failed"));
+    xhr.onerror = () => {
+      forgetRequest(xhr);
+      reject(new Error("upload failed"));
+    };
 
-    request.send(uploadData.slice(0, size));
+    xhr.onabort = () => {
+      forgetRequest(xhr);
+      reject(new Error("upload cancelled"));
+    };
+
+    xhr.open("POST", "/upload");
+    xhr.send(uploadBlob.slice(0, size));
   });
 }
 
-// Transfers objects one after another on a single connection until told to
-// stop, moving to larger objects while they finish quickly.
-async function runConnection(transferObject, progress) {
-  let sizeIndex = 0;
+// ----- Download / upload speed test -----
 
-  while (progress.keepRunning && progress.transferredBytes < MAX_TEST_BYTES) {
-    const startTime = performance.now();
-    await transferObject(OBJECT_SIZES[sizeIndex], progress);
-    const durationMs = performance.now() - startTime;
+// One connection: transfers objects one after another until the test stops.
+// Objects get bigger while they finish quickly, so slow and fast
+// internet connections both get a sensible object size.
+async function runConnection(transferOne) {
+  let size = FIRST_OBJECT_SIZE;
 
-    const hasLargerObject = sizeIndex < OBJECT_SIZES.length - 1;
-    if (durationMs < TARGET_OBJECT_TIME_MS && hasLargerObject) {
-      sizeIndex++;
+  while (test.running) {
+    const start = performance.now();
+    try {
+      await transferOne(size);
+    } catch (error) {
+      if (!test.running) return; // we cancelled it ourselves, that's fine
+      throw error;               // a real error
+    }
+
+    const time = performance.now() - start;
+    if (time < FAST_OBJECT_TIME) {
+      size = Math.min(size * 2, BIGGEST_OBJECT_SIZE);
     }
   }
 }
 
-// Returns true when the most recent speeds are close to each other.
-function isSpeedStable(speeds) {
-  if (speeds.length < STABLE_SPEED_COUNT) {
-    return false;
-  }
-
-  const recentSpeeds = speeds.slice(-STABLE_SPEED_COUNT);
-  const fastestSpeed = Math.max(...recentSpeeds);
-  const slowestSpeed = Math.min(...recentSpeeds);
-
-  return fastestSpeed > 0 && fastestSpeed - slowestSpeed <= fastestSpeed * STABILITY_TOLERANCE;
-}
-
-// Runs one download or upload test and returns the final speed in Mbps.
-async function measureSpeed(transferObject, valueElement) {
-  const progress = { transferredBytes: 0, keepRunning: true };
+// Runs a download or upload test. Shows the speed live and returns
+// { speed: Mbps, bytes: total data transferred }.
+async function measureSpeed(transferOne, speedElement, dataElement) {
+  test = { running: true, bytes: 0, openRequests: [] };
   const startTime = performance.now();
 
+  // Start all connections at the same time.
+  let error = null;
   const connections = [];
-  for (let connection = 0; connection < PARALLEL_CONNECTIONS; connection++) {
-    connections.push(runConnection(transferObject, progress));
+  for (let i = 0; i < CONNECTIONS; i++) {
+    connections.push(runConnection(transferOne));
   }
+  const allFinished = Promise.all(connections).catch((e) => {
+    error = e;
+    stopTest();
+  });
 
-  const samples = [{ timeMs: startTime, bytes: 0 }];
-  const speeds = [];
-  let speedMbps = 0;
+  const history = [{ time: startTime, bytes: 0 }]; // byte count at every check
+  const readings = [];                              // speeds measured after warm-up
+  let finalSpeed = 0;
 
-  // Check the speed regularly until it is stable or a limit is reached.
-  while (progress.keepRunning) {
-    await wait(SAMPLE_INTERVAL_MS);
+  while (test.running) {
+    await wait(CHECK_EVERY);
+    const now = performance.now();
+    history.push({ time: now, bytes: test.bytes });
 
-    const sample = { timeMs: performance.now(), bytes: progress.transferredBytes };
-    samples.push(sample);
+    // Speed over the last second.
+    const oneSecondAgo = history[Math.max(0, history.length - 1 - READINGS_PER_SECOND)];
+    const speed = toMbps(test.bytes - oneSecondAgo.bytes, now - oneSecondAgo.time);
 
-    const windowStart = samples[Math.max(0, samples.length - 1 - SPEED_WINDOW_SAMPLES)];
-    speedMbps = calculateSpeedMbps(
-      sample.bytes - windowStart.bytes,
-      sample.timeMs - windowStart.timeMs,
-    );
-    valueElement.textContent = speedMbps.toFixed(1);
+    speedElement.textContent = speed.toFixed(1);
+    dataElement.textContent = toMB(test.bytes);
 
-    const elapsedMs = sample.timeMs - startTime;
-    if (elapsedMs >= RAMP_UP_TIME_MS) {
-      speeds.push(speedMbps);
+    const elapsed = now - startTime;
+    if (elapsed >= WARM_UP_TIME) {
+      readings.push(speed);
     }
 
-    if (
-      isSpeedStable(speeds) ||
-      elapsedMs >= MAX_TEST_TIME_MS ||
-      sample.bytes >= MAX_TEST_BYTES
-    ) {
-      progress.keepRunning = false;
+    const lastReadings = readings.slice(-READINGS_TO_COMPARE);
+    const stable = lastReadings.length === READINGS_TO_COMPARE && isStable(lastReadings);
+
+    if (stable || elapsed >= MAX_TEST_TIME) {
+      finalSpeed = lastReadings.length > 0 ? average(lastReadings) : speed;
+      stopTest();
     }
   }
 
-  // Let the objects still in progress finish, so every byte is counted.
-  await Promise.all(connections);
+  await allFinished;
+  if (error) throw error;
 
-  return speedMbps;
+  speedElement.textContent = finalSpeed.toFixed(1);
+  dataElement.textContent = toMB(test.bytes);
+  return { speed: finalSpeed, bytes: test.bytes };
 }
 
-// Runs when the user clicks the start button.
-async function startTest() {
+// ----- Start button -----
+
+async function startSpeedTest() {
   startButton.disabled = true;
   pingValue.textContent = "--";
   downloadValue.textContent = "--";
   uploadValue.textContent = "--";
+  downloadData.textContent = "0.00 MB";
+  uploadData.textContent = "0.00 MB";
+  summaryText.textContent = "";
+  const testStart = performance.now();
 
   try {
-    statusText.textContent = "Measuring ping...";
+    statusText.textContent = "Step 1 of 3: measuring ping...";
     const ping = await measurePing();
     pingValue.textContent = ping.toFixed(1);
 
-    statusText.textContent = "Measuring download speed...";
-    await measureSpeed(downloadObject, downloadValue);
+    statusText.textContent = "Step 2 of 3: measuring download speed...";
+    const download = await measureSpeed(downloadOne, downloadValue, downloadData);
 
-    statusText.textContent = "Measuring upload speed...";
-    await measureSpeed(uploadObject, uploadValue);
+    statusText.textContent = "Step 3 of 3: measuring upload speed...";
+    if (uploadBlob === null) {
+      uploadBlob = makeRandomBlob(BIGGEST_OBJECT_SIZE);
+    }
+    const upload = await measureSpeed(uploadOne, uploadValue, uploadData);
 
+    const totalSeconds = (performance.now() - testStart) / 1000;
     statusText.textContent = "Test complete";
+    summaryText.textContent =
+      "Total time: " + totalSeconds.toFixed(1) + " s, total data: " +
+      toMB(download.bytes + upload.bytes);
   } catch (error) {
-    statusText.textContent = "Test failed: could not reach the server";
+    statusText.textContent = "Test failed: " + error.message;
   } finally {
     startButton.disabled = false;
   }
 }
 
-startButton.addEventListener("click", startTest);
+startButton.addEventListener("click", startSpeedTest);

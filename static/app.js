@@ -5,7 +5,9 @@
 
 // ----- Settings -----
 const PING_COUNT = 10;               // number of pings (we report the lowest)
-const CONNECTIONS = 6;               // parallel connections (6 = the most a browser opens to one site)
+// Number of transfers running at the same time. Default is 1 (no parallel transfers).
+// For experiments it can be changed in the address bar, e.g. /?connections=4
+const CONNECTIONS = Number(new URLSearchParams(location.search).get("connections")) || 1;
 const FIRST_OBJECT_SIZE = 100_000;   // 100 KB, size of the first object on each connection
 const BIGGEST_OBJECT_SIZE = 8_000_000; // 8 MB, objects never get bigger than this
 const FAST_OBJECT_TIME = 250;        // ms, if an object finishes faster, the next one is 2x bigger
@@ -280,7 +282,7 @@ async function startSpeedTest() {
     statusText.textContent = "Test complete";
     summaryText.textContent =
       "Total time: " + totalSeconds.toFixed(1) + " s, total data: " +
-      toMB(download.bytes + upload.bytes);
+      toMB(download.bytes + upload.bytes) + ", connections: " + CONNECTIONS;
   } catch (error) {
     statusText.textContent = "Test failed: " + error.message;
   } finally {

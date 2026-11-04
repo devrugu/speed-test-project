@@ -48,3 +48,24 @@ button:disabled {
 .result h2 {
   font-size: 16px;
 }
+
+/* Big result number and the data line under it */
+.value {
+  font-size: 28px;
+  font-weight: bold;
+  margin: 8px 0;
+}
+
+.data {
+  font-size: 14px;
+  color: #52606d;
+}
+
+#status {
+  font-size: 18px;
+}
+
+#summary {
+  margin-top: 24px;
+  font-weight: bold;
+}

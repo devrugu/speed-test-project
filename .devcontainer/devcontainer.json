@@ -1,0 +1,22 @@
+{
+  // Codespace setup for the speed test project.
+  // Uses a small image with Go already installed, instead of GitHub's large default image.
+  "name": "Speed Test (Go)",
+  "image": "mcr.microsoft.com/devcontainers/go:1",
+
+  // Forward the port the Go server listens on (see serverAddress in main.go).
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "Speed Test website",
+      "onAutoForward": "openBrowser"
+    }
+  },
+
+  // Install the Go extension in the editor.
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"]
+    }
+  }
+}

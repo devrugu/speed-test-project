@@ -1,4 +1,10 @@
-// Package main is the speed test web server.
+// Speed test web server.
+//
+// It serves the website (the "static" folder) and three test endpoints:
+//
+//	/ping                 -> empty reply, used to measure round-trip time
+//	/download?size=BYTES  -> sends BYTES of random data
+//	/upload               -> receives data, throws it away, replies with the byte count
 package main
 
 import (
@@ -7,82 +13,76 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 )
 
-// serverAddress is the network port the server listens on.
-const serverAddress = ":8080"
+// maxSize is the biggest object (in bytes) a browser can download or upload at once.
+const maxSize = 10_000_000 // 10 MB
 
-// staticFolder holds the website files sent to the browser.
-const staticFolder = "static"
+// randomData is sent again and again as download data.
+// We use random bytes so nothing on the way can compress them.
+var randomData = make([]byte, 1_000_000) // 1 MB
 
-// randomBlockSize is the size in bytes of the block of test data kept in memory.
-const randomBlockSize = 1_000_000
-
-// maxObjectSize is the largest object in bytes a client can download or upload.
-const maxObjectSize = 25_000_000
-
-// randomBlock holds random bytes that are sent repeatedly as download data.
-var randomBlock = make([]byte, randomBlockSize)
-
-// handlePing replies straight away with an empty response, so the browser
-// can time one round trip to the server.
-func handlePing(writer http.ResponseWriter, request *http.Request) {
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.WriteHeader(http.StatusNoContent)
+// pingHandler answers immediately with an empty response.
+func pingHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleDownload sends the number of random bytes given by the "size" query
-// parameter, for example /download?size=1000000.
-func handleDownload(writer http.ResponseWriter, request *http.Request) {
-	size, err := strconv.Atoi(request.URL.Query().Get("size"))
-	if err != nil || size <= 0 || size > maxObjectSize {
-		http.Error(writer, "Invalid size", http.StatusBadRequest)
+// downloadHandler sends "size" bytes of random data, e.g. /download?size=500000
+func downloadHandler(w http.ResponseWriter, r *http.Request) {
+	size, err := strconv.Atoi(r.URL.Query().Get("size"))
+	if err != nil || size <= 0 || size > maxSize {
+		http.Error(w, "size must be between 1 and 10000000", http.StatusBadRequest)
 		return
 	}
 
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.Header().Set("Content-Type", "application/octet-stream")
-	writer.Header().Set("Content-Length", strconv.Itoa(size))
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.Itoa(size))
 
-	// Send the object in chunks until every requested byte has been written.
-	remainingBytes := size
-	for remainingBytes > 0 {
-		chunkSize := min(remainingBytes, randomBlockSize)
-		if _, err := writer.Write(randomBlock[:chunkSize]); err != nil {
-			return
+	// Write the 1 MB random block as many times as needed.
+	for size > 0 {
+		n := min(size, len(randomData))
+		if _, err := w.Write(randomData[:n]); err != nil {
+			return // the browser stopped the download, which is normal at the end of a test
 		}
-		remainingBytes -= chunkSize
+		size -= n
 	}
 }
 
-// handleUpload reads all the data sent by the browser, throws it away and
-// replies with the number of bytes received.
-func handleUpload(writer http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodPost {
-		http.Error(writer, "Use POST", http.StatusMethodNotAllowed)
+// uploadHandler reads everything the browser sends and replies with how many bytes arrived.
+func uploadHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "use POST", http.StatusMethodNotAllowed)
 		return
 	}
 
-	limitedBody := http.MaxBytesReader(writer, request.Body, maxObjectSize)
-	receivedBytes, err := io.Copy(io.Discard, limitedBody)
+	body := http.MaxBytesReader(w, r.Body, maxSize)
+	receivedBytes, err := io.Copy(io.Discard, body)
 	if err != nil {
-		http.Error(writer, "Upload too large", http.StatusRequestEntityTooLarge)
-		return
+		return // the browser stopped the upload, or it was too big
 	}
 
-	writer.Header().Set("Cache-Control", "no-store")
-	fmt.Fprint(writer, receivedBytes)
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprint(w, receivedBytes)
 }
 
 func main() {
-	rand.Read(randomBlock)
+	rand.Read(randomData)
 
-	http.HandleFunc("/ping", handlePing)
-	http.HandleFunc("/download", handleDownload)
-	http.HandleFunc("/upload", handleUpload)
-	http.Handle("/", http.FileServer(http.Dir(staticFolder)))
+	// The port can be changed with the PORT environment variable (default 8080).
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
-	log.Println("Server started at http://localhost" + serverAddress)
-	log.Fatal(http.ListenAndServe(serverAddress, nil))
+	http.HandleFunc("/ping", pingHandler)
+	http.HandleFunc("/download", downloadHandler)
+	http.HandleFunc("/upload", uploadHandler)
+	http.Handle("/", http.FileServer(http.Dir("static")))
+
+	log.Println("Speed test server running on http://localhost:" + port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }

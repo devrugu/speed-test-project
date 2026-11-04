@@ -9,23 +9,27 @@
 <body>
   <main>
     <h1>Speed Test</h1>
-    <button id="start-button" type="button">Start Test</button>
-    <p id="status">Ready</p>
+    <button id="start-button" type="button">Begin Speed Test</button>
+    <p id="status">Click the button to start</p>
 
     <section class="results">
       <div class="result">
         <h2>Ping</h2>
-        <p><span id="ping-value">--</span> ms</p>
+        <p class="value"><span id="ping-value">--</span> ms</p>
       </div>
       <div class="result">
         <h2>Download</h2>
-        <p><span id="download-value">--</span> Mbps</p>
+        <p class="value"><span id="download-value">--</span> Mbps</p>
+        <p class="data">Data downloaded: <span id="download-data">0.00 MB</span></p>
       </div>
       <div class="result">
         <h2>Upload</h2>
-        <p><span id="upload-value">--</span> Mbps</p>
+        <p class="value"><span id="upload-value">--</span> Mbps</p>
+        <p class="data">Data uploaded: <span id="upload-data">0.00 MB</span></p>
       </div>
     </section>
+
+    <p id="summary"></p>
   </main>
 
   <script src="app.js"></script>

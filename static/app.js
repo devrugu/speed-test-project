@@ -5,9 +5,10 @@
 
 // ----- Settings -----
 const PING_COUNT = 10;               // number of pings (we report the lowest)
-// Number of transfers running at the same time (parallel connections). Default is 4.
-// For experiments it can be changed in the address bar, e.g. /?connections=6
-const CONNECTIONS = Number(new URLSearchParams(location.search).get("connections")) || 4;
+// Number of transfers running at the same time (parallel connections). Default is 6,
+// the most HTTP/1.1 connections a browser opens to one website.
+// For experiments it can be changed in the address bar, e.g. /?connections=2
+const CONNECTIONS = Number(new URLSearchParams(location.search).get("connections")) || 6;
 const FIRST_OBJECT_SIZE = 100_000;   // 100 KB, size of the first object on each connection
 const BIGGEST_OBJECT_SIZE = 8_000_000; // 8 MB, objects never get bigger than this
 const FAST_OBJECT_TIME = 250;        // ms, if an object finishes faster, the next one is 2x bigger

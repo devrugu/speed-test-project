@@ -1,35 +1,90 @@
-/* Page layout */
+/* ----- Colors (dark theme) ----- */
+:root {
+  --background: #0b0f14;
+  --card: #151b23;
+  --card-border: #232c37;
+  --text: #e6edf3;
+  --text-dim: #8b98a5;
+  --ping-color: #f5c542;
+  --download-color: #2ee6a6;
+  --upload-color: #a78bfa;
+  --accent: #2ee6a6;
+}
+
+/* ----- Page layout ----- */
 body {
   margin: 0;
-  background: #f4f6f8;
-  color: #1f2933;
-  font-family: Arial, sans-serif;
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--text);
+  font-family: "Segoe UI", Arial, sans-serif;
   text-align: center;
 }
 
 main {
-  max-width: 640px;
+  max-width: 720px;
   margin: 0 auto;
-  padding: 32px 16px;
+  padding: 48px 16px;
 }
 
-/* Start button */
+h1 {
+  margin: 0 0 32px;
+  font-size: 36px;
+  letter-spacing: 1px;
+}
+
+/* ----- Start button: a big round button ----- */
 button {
-  padding: 12px 32px;
-  border: none;
-  border-radius: 6px;
-  background: #1769aa;
-  color: white;
+  width: 160px;
+  height: 160px;
+  border: 3px solid var(--accent);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text);
   font-size: 18px;
+  font-weight: bold;
   cursor: pointer;
+  box-shadow: 0 0 24px rgba(46, 230, 166, 0.25);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+button:hover {
+  background: rgba(46, 230, 166, 0.1);
+  box-shadow: 0 0 36px rgba(46, 230, 166, 0.45);
 }
 
 button:disabled {
-  background: #9aa5b1;
+  border-color: var(--card-border);
+  color: var(--text-dim);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
-/* Result cards: three in a row, wrapping on narrow screens */
+#status {
+  margin: 24px 0 12px;
+  font-size: 18px;
+  color: var(--text-dim);
+}
+
+/* ----- Progress bar ----- */
+.progress {
+  height: 10px;
+  margin: 0 auto 32px;
+  max-width: 480px;
+  border-radius: 5px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  overflow: hidden;
+}
+
+.progress-bar {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--ping-color), var(--download-color), var(--upload-color));
+  transition: width 0.25s linear;
+}
+
+/* ----- Result cards: three in a row, wrapping on narrow screens ----- */
 .results {
   display: flex;
   flex-wrap: wrap;
@@ -39,33 +94,40 @@ button:disabled {
 
 .result {
   flex: 1;
-  min-width: 150px;
-  padding: 8px;
-  border-radius: 6px;
-  background: white;
+  min-width: 180px;
+  padding: 16px;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  background: var(--card);
 }
 
 .result h2 {
-  font-size: 16px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
 }
 
-/* Big result number and the data line under it */
 .value {
-  font-size: 28px;
+  margin: 12px 0 8px;
+  font-size: 32px;
   font-weight: bold;
-  margin: 8px 0;
 }
+
+/* Each result has its own color */
+#ping-value { color: var(--ping-color); }
+#download-value { color: var(--download-color); }
+#upload-value { color: var(--upload-color); }
 
 .data {
-  font-size: 14px;
-  color: #52606d;
-}
-
-#status {
-  font-size: 18px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
 }
 
 #summary {
-  margin-top: 24px;
-  font-weight: bold;
+  margin-top: 28px;
+  color: var(--text-dim);
 }
